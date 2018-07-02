@@ -8,9 +8,9 @@ from torch import optim
 from torch.autograd import Variable
 import torch.nn.functional as F
 from skimage.measure import compare_ssim as ssim
-from model_old import Resnet_Encoder as Resnet_Encoder_torchvision
-from model_old import Resnet_Discriminator as Resnet_Discriminator_torchvision
-from model_old import Generator as Generator_upsampling
+from model import Resnet_Encoder
+from model import Resnet_Discriminator
+from model import Generator
 import utils
 
 
@@ -70,12 +70,12 @@ class Solver(object):
 
 	def build_model(self):
 		"""Build generator and discriminator."""
-		self.enc_style = Resnet_Encoder_torchvision(num_classes=self.style_cnt, embedding_size=self.z_dim)
-		self.enc_char = Resnet_Encoder_torchvision(num_classes=self.char_cnt, embedding_size=self.z_dim)
-		self.decoder = Generator_upsampling(c_in=2*self.z_dim)
-		self.discriminator = Resnet_Discriminator_torchvision(tf_classes=1,
+		self.enc_style = Resnet_Encoder(num_classes=self.style_cnt, embedding_size=self.z_dim)
+		self.enc_char = Resnet_Encoder(num_classes=self.char_cnt, embedding_size=self.z_dim)
+		self.decoder = Generator(c_in=2*self.z_dim + 2*self.char_cnt)
+		self.discriminator = Resnet_Discriminator(tf_classes=1,
 												st_classes=self.style_cnt, ch_classes=self.char_cnt)
-		self.generator = Generator_upsampling(c_in=2*self.z_dim + 2*self.char_cnt)
+		self.generator = Generator(c_in=2*self.z_dim + 2*self.char_cnt)
 		self.e_optimizer = optim.Adam(list(self.enc_style.parameters()) + list(self.enc_char.parameters()) + \
 									  list(self.decoder.parameters()),
 									  self.e_lr, [self.beta1, self.beta2])
@@ -234,11 +234,13 @@ class Solver(object):
 						positive,_ = self.enc_char(st_tg)
 						negative,_ = self.enc_char(ch_tg)
 
-						triplet_loss_char = F.triplet_margin_loss(anchor_char, positive, char_negative)
+						triplet_loss_char = F.triplet_margin_loss(anchor_char, positive, negative)
 						e_loss += triplet_loss_char
 
-					z = torch.cat((anchor_style, anchor_char), dim=1)
-					rec_img = self.decoder(z)
+					real_char_onehot = self.label2onehot(real_char)
+					targ_char_onehot = self.label2onehot(targ_char)
+
+					rec_img = self.decoder(real_char_onehot, anchor_style, anchor_char, targ_char_onehot)
 					ae_loss = torch.mean(torch.abs(images - rec_img))
 					e_loss += ae_loss
 
