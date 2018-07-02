@@ -8,9 +8,9 @@ from torch import optim
 from torch.autograd import Variable
 import torch.nn.functional as F
 from skimage.measure import compare_ssim as ssim
-from model_old import Resnet_Encoder as Resnet_Encoder_torchvision
-from model_old import Resnet_Discriminator as Resnet_Discriminator_torchvision
-from model_old import Generator as Generator_upsampling
+from model import Resnet_Encoder
+from model import Resnet_Discriminator
+from model import Generator
 import utils
 
 
@@ -70,12 +70,12 @@ class Solver(object):
 
 	def build_model(self):
 		"""Build generator and discriminator."""
-		self.enc_style = Resnet_Encoder_torchvision(num_classes=self.style_cnt, embedding_size=self.z_dim)
-		self.enc_char = Resnet_Encoder_torchvision(num_classes=self.char_cnt, embedding_size=self.z_dim)
-		self.decoder = Generator_upsampling(c_in=2*self.z_dim)
-		self.discriminator = Resnet_Discriminator_torchvision(tf_classes=1,
+		self.enc_style = Resnet_Encoder(num_classes=self.style_cnt, embedding_size=self.z_dim)
+		self.enc_char = Resnet_Encoder(num_classes=self.char_cnt, embedding_size=self.z_dim)
+		self.decoder = Generator(c_in=2*self.z_dim + 2*self.char_cnt)
+		self.discriminator = Resnet_Discriminator(tf_classes=1,
 												st_classes=self.style_cnt, ch_classes=self.char_cnt)
-		self.generator = Generator_upsampling(c_in=2*self.z_dim + 2*self.char_cnt)
+		self.generator = Generator(c_in=2*self.z_dim + 2*self.char_cnt)
 		self.e_optimizer = optim.Adam(list(self.enc_style.parameters()) + list(self.enc_char.parameters()) + \
 									  list(self.decoder.parameters()),
 									  self.e_lr, [self.beta1, self.beta2])
@@ -234,11 +234,13 @@ class Solver(object):
 						positive,_ = self.enc_char(st_tg)
 						negative,_ = self.enc_char(ch_tg)
 
-						triplet_loss_char = F.triplet_margin_loss(anchor_char, positive, char_negative)
+						triplet_loss_char = F.triplet_margin_loss(anchor_char, positive, negative)
 						e_loss += triplet_loss_char
 
-					z = torch.cat((anchor_style, anchor_char), dim=1)
-					rec_img = self.decoder(z)
+					real_char_onehot = self.label2onehot(real_char)
+					targ_char_onehot = self.label2onehot(targ_char)
+
+					rec_img = self.decoder(real_char_onehot, anchor_style, anchor_char, targ_char_onehot)
 					ae_loss = torch.mean(torch.abs(images - rec_img))
 					e_loss += ae_loss
 
@@ -310,26 +312,26 @@ class Solver(object):
 		for epoch in range(start_iter, self.num_epochs):
 			self.generator.train(True)
 			self.discriminator.train(True)
-			for i, (x_style, x_target, style, char, x_style_c, x_char_s) in enumerate(self.train_loader):
+			for i, (x_style, x_trg, style, char, x_trg_c, x_trg_s) in enumerate(self.train_loader):
 
 				loss = {}
 				batch_size = x_trg.size(0)
 				# Generate real labels
-				x_trg = self.to_variable(x_trg)
+				x_style = self.to_variable(x_style)
 				style = self.to_variable(style)
 				char = self.to_variable(char)
 				char_onehot = self.label2onehot(char)
 				# Character transfer. keep style. and thats' character index
-				x_style = self.to_variable(x_style)
-				x_style_c = self.to_variable(x_style_c)
-				x_style_c_onehot = self.label2onehot(x_style_c)
+				x_trg = self.to_variable(x_trg)
+				x_trg_c = self.to_variable(x_trg_c)
+				x_trg_c_onehot = self.label2onehot(x_trg_c)
 
 				#==================================== Train D ====================================#
 
  				# Generate fake image from Encoder
 				real_style, _ = self.enc_style(x_style)
 				real_char, _ = self.enc_char(x_style)
-				fake_img = self.generator(x_style_c_onehot, real_style, real_char, char_onehot)
+				fake_img = self.generator(char_onehot, real_style, real_char, x_trg_c_onehot)
 
 				# 1) Train D to recognize real images as real.
 				out_src, out_style, out_char = self.discriminator(x_trg)
@@ -373,14 +375,15 @@ class Solver(object):
 					real_style, _ = self.enc_style(x_style)
 					real_char, _ = self.enc_char(x_style)
 
-					fake_img = self.generator(x_style_c_onehot, real_style, real_char, char_onehot)
+					fake_img = self.generator(char_onehot, real_style, real_char, x_trg_c_onehot)
 
 					# Generate identity image from Encoder
-					id_img = self.generator(x_style_c_onehot, real_style, real_char, x_style_c_onehot)
+					id_img = self.generator(x_trg_c_onehot, real_style, real_char, x_trg_c_onehot)
 
 					# Reconstruct Image from fake image
 					fake_style, _ = self.enc_style(fake_img)
-					rec_img = self.generator(char_onehot, fake_style, real_char, x_style_c_onehot)
+					fake_char, _ = self.enc_char(fake_img)
+					rec_img = self.generator(x_trg_c_onehot, fake_style, fake_char, char_onehot)
 
 					rec_style, _ = self.enc_style(rec_img)
 					rec_char, _ = self.enc_char(rec_img)
@@ -415,7 +418,6 @@ class Solver(object):
 							 self.lambda_cls * (g_loss_style + g_loss_char) + \
 					 	     self.lambda_rec * (g_loss_rec + g_loss_rec_per
 							 + g_loss_l1 - ssim_fake) + g_loss_id
-					 	     #self.lambda_rec * (g_loss_rec + g_loss_rec_per) + \
 
 					# Backprop + Optimize
 					self.reset_grad()
@@ -447,16 +449,16 @@ class Solver(object):
 						x_trg = x_trg.view(x_trg.size(0), 2, self.image_size, self.image_size)
 						x_trg = self.tensor2img(x_trg)
 						fake_img = self.tensor2img(fake_img)
-						torchvision.utils.save_image(self.denorm(np.reshape(x_trg.data.cpu(),(-1,1,self.image_size,self.image_size))),
+						torchvision.utils.save_image(np.reshape(x_trg.data.cpu(),(-1,1,self.image_size,self.image_size)),
 							os.path.join(self.sample_path,
 										'real_images-%d_train.png' %(epoch+1)))
 
 						# save the sampled images
-						torchvision.utils.save_image(self.denorm(np.reshape(fake_img.data.cpu(),(-1,1,self.image_size,self.image_size))),
+						torchvision.utils.save_image(np.reshape(fake_img.data.cpu(),(-1,1,self.image_size,self.image_size)),
 							os.path.join(self.sample_path,
 										'fake_samples-%d_train.png' %(epoch+1)))
 
-			del x_trg, x_style, style, char, x_style_c, x_char_s
+			del x_trg, x_style, style, char, x_trg_c, x_trg_s
 			del fake_img, rec_img, id_img, ssim_fake
 			#==================================== Valid GD ====================================#
 			if (epoch+1) % self.val_step == 0:
@@ -467,7 +469,7 @@ class Solver(object):
 
 				ssim_fake = 0.
 				ssim_rec = 0.
-				for i, (x_style, _, x_trg, _, x_style_c, char, _) in enumerate(self.test_loader):
+				for i, (x_style, x_trg, _, x_style_c, char, _) in enumerate(self.test_loader):
 
 					batch_size = x_style.size(0)
 
@@ -485,9 +487,9 @@ class Solver(object):
 
 					ssim_fake += utils.ssim(x_trg, fake_img).data.cpu().numpy()
 
-					fake_img = self.generator(x_style_c, real_style, real_char, x_style_c)
+					rec_img = self.generator(x_style_c, real_style, real_char, x_style_c)
 
-					ssim_rec += utils.ssim(x_style, fake_img).data.cpu().numpy()
+					ssim_rec += utils.ssim(x_style, rec_img).data.cpu().numpy()
 
 				print('Valid SSIM: ', end='')
 				print("{:.4f}".format(ssim_fake/(i+1)))
