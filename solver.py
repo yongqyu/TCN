@@ -238,9 +238,8 @@ class Solver(object):
 						e_loss += triplet_loss_char
 
 					real_char_onehot = self.label2onehot(real_char)
-					targ_char_onehot = self.label2onehot(targ_char)
 
-					rec_img = self.decoder(real_char_onehot, anchor_style, anchor_char, targ_char_onehot)
+					rec_img = self.decoder(real_char_onehot, anchor_style, anchor_char, real_char_onehot)
 					ae_loss = torch.mean(torch.abs(images - rec_img))
 					e_loss += ae_loss
 
