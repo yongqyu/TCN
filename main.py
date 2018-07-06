@@ -8,6 +8,14 @@ from torch.backends import cudnn
 def main(config):
     cudnn.benchmark = True
 
+    pretrain_loader = get_loader(image_path=config.pretrain_path,
+                                 image_size=config.image_size,
+                                 batch_size=config.batch_size,
+                                 num_workers=config.num_workers)
+    prevalid_loader = get_loader(image_path=config.prevalid_path,
+                                 image_size=config.image_size,
+                                 batch_size=config.batch_size,
+                                 num_workers=config.num_workers)
     train_loader = get_loader(image_path=config.train_path,
                              image_size=config.image_size,
                              batch_size=config.batch_size,
@@ -30,6 +38,9 @@ def main(config):
         os.makedirs(config.result_path)
 
     # Train and sample the images
+    if config.mode == 'pretrain':
+        solver = Solver(config, pretrain_loader, prevalid_loader, None)
+        solver.pretrain()
     if config.mode == 'train':
         solver = Solver(config, train_loader, valid_loader, test_loader)
         solver.train()
@@ -44,7 +55,6 @@ if __name__ == '__main__':
     parser.add_argument('--image_size', type=int, default=128)
     parser.add_argument('--z_dim', type=int, default=256)
     parser.add_argument('--d_train_repeat', type=int, default=5)
-    parser.add_argument('--enc2mat', type=bool, default=False)
 
     # training hyper-parameters
     parser.add_argument('--enc_epochs', type=int, default=100)
@@ -68,13 +78,15 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default='./models')
     parser.add_argument('--sample_path', type=str, default='./samples')
     parser.add_argument('--result_path', type=str, default='./results')
-    parser.add_argument('--train_path', type=str, default='../dataset/small-trans-valid/train/')
-    parser.add_argument('--valid_path', type=str, default='../dataset/small-trans-valid/valid/')
-    parser.add_argument('--test_path', type=str, default='../dataset/small-trans-valid/test/')
-    parser.add_argument('--log_step', type=int , default=3000)
+    parser.add_argument('--pretrain_path', type=str, default='../dataset/eng-trans-valid/train/')
+    parser.add_argument('--prevalid_path', type=str, default='../dataset/eng-trans-valid/valid/')
+    parser.add_argument('--train_path', type=str, default='../dataset/eng-png/train/')
+    parser.add_argument('--valid_path', type=str, default='../dataset/eng-png/valid/')
+    parser.add_argument('--test_path', type=str, default='../dataset/eng-png/test/')
+    parser.add_argument('--log_step', type=int , default=1000)
     parser.add_argument('--val_step', type=int , default=5)
-    parser.add_argument('--style_cnt', type=int , default=150)
-    parser.add_argument('--char_cnt', type=int , default=1000)
+    parser.add_argument('--style_cnt', type=int , default=907)#150)
+    parser.add_argument('--char_cnt', type=int , default=26)#1000)
 
     config = parser.parse_args()
     print(config)

@@ -3,7 +3,6 @@
 
 import os
 import random
-from random import shuffle
 import numpy as np
 import torch
 from torch.utils import data
@@ -17,6 +16,7 @@ class ImageFolder(data.Dataset):
 		"""Initializes image paths and preprocessing module."""
 		self.root = root
 		self.image_paths = list(map(lambda x: os.path.join(root, x), os.listdir(root)))
+		random.shuffle(self.image_paths)
 		self.transform = transform
 		self.image_size = image_size
 		print("image count in path :", len(self.image_paths))
@@ -105,7 +105,11 @@ def get_loader(image_path, image_size, batch_size, num_workers=2):
 					transforms.ToTensor(),
 					transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-	dataset = ImageFolder(image_path, transform, image_size)
+	if 'png' in image_path:
+		dataset = ImageFolder(image_path, transform, image_size)
+	else:
+		dataset = EncImageFolder(image_path, transform, image_size)
+
 	data_loader = data.DataLoader(dataset=dataset,
 								  batch_size=batch_size,
 								  shuffle=True,
