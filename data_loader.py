@@ -27,8 +27,11 @@ class ImageFolder(data.Dataset):
 		style_idx = int(image_path.split('_')[0][len(self.root):])
 		char_idx = int(image_path.split('_')[1][:-len(".png")])
 
-		target_path = random.choice([x for x in self.image_paths
-									if str(style_idx)+'_' in x and '_'+str(char_idx) not in x])
+		try:
+			target_path = random.choice([x for x in self.image_paths
+										if str(style_idx)+'_' in x and '_'+str(char_idx) not in x])
+		except:
+			target_path = image_path
 		style_trg_idx = int(target_path.split('_')[0][len(self.root):])
 		char_trg_idx = int(target_path.split('_')[1][:-len(".png")])
 

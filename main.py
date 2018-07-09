@@ -41,6 +41,8 @@ def main(config):
     if config.mode == 'pretrain':
         solver = Solver(config, pretrain_loader, prevalid_loader, None)
         solver.pretrain()
+        solver = Solver(config, train_loader, valid_loader, test_loader)
+        solver.train()
     if config.mode == 'train':
         solver = Solver(config, train_loader, valid_loader, test_loader)
         solver.train()
