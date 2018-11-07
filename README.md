@@ -1,10 +1,25 @@
-# <center>HTTP : Hyper Typography Transfer Pipeline
+# <center>Typeface Completion with Generative Adversarial Networks
 
 ## Abstract
-With the development of the computer and the Internet, the amount of text produced by word processors is increasing. Typography plays an important role in computer text as well as in handwriting. If we utilize the typography, we can express not only the textual meaning, but also various expressions such as the author’s intention and feelings. In creating a typography, there are two major difficulties. One is to maintain the style for all characters, and the other is to create all characters manually. Especially, a large character set like Chinese. We map the production of a typography to a style transfer task in the sense of data as character images. Based on the style transfer model, we devise a Hyper-Typography Transfer Pipeline(HTTP) that takes a character subset as an input and automatically completes all character set while maintaining the style. There are advantages and disadvantages of character image dataset for style transfer task compared with general images. Whole character images, supported by type-file, have labels, so it has the advantage of being able to supervised learning. However, to deceive people with plausible images is difficult, and also laborious to distinguish subtle differences in styles. Our model is based on the existing style transfer models. But they have some drawbacks to these character image dataset. First one is that there are limitation to represent thousands of characters with one-hot vector labels. To solve this problem, we embedded the character images to style vector and content vector. Another one is that existing style transfer models do not support cross-domain transfer. For style transfer from unfixed inputs to all characters, a single-domain transfer model requires a number of models corresponding to the square of the total number of characters. Therefore, we propose a cross-domain transfer model that can transfer styles between different characters. We also add new losses to generate character images which are strict to one stroke. We utilized an explicit score using structural similarity(SSIM) [[1](https://ieeexplore.ieee.org/document/1284395/)], and obtained higher scores than existing baselines.
+  The mood of a text and the intention of the writer can be reflected in the
+typeface. However, in designing a typeface, it is difficult to keep the style
+of various characters consistent, especially for languages with lots of
+morphological variations such as Chinese. In this paper, we propose a Typeface
+Completion Network (TCN) which takes a subset of characters as an input, and
+automatically completes the entire set of characters in the same style as the
+input characters. Unlike existing models proposed for style transfer, TCN
+embeds a character image into two separate vectors representing typeface and
+content. Combined with a reconstruction loss from the latent space, and with
+other various losses, TCN overcomes the inherent difficulty in designing a
+typeface. Also, compared to previous style transfer models, TCN generates high
+quality characters of the same typeface with a much smaller number of model
+parameters. We validate our proposed model on the Chinese and English character
+datasets, and the CelebA dataset on which TCN outperforms recently proposed
+state-ofthe-art models for style transfer. The source code of our model is
+available at https://github.com/yongqyu/TCN.
 
 ## Paper
-[HTTP:Hyper-Typography Transfer Pipeline](https://arxiv.org/) <br />
+[Typeface Completion with Generative Adversarial Networks](https://arxiv.org/) <br />
 [Yonggyu Park](https://github.com/yongqyu), [Junhyun LEE](https://github.com/LeeJunHyun), [Yookyung Koh](https://github.com/yookyungKoh), [Inyeop Lee](https://github.com/inyeoplee77), [Jaewoo Kang](http://infos.korea.ac.kr/kang/)
 
 
