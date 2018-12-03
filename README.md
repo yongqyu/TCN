@@ -20,7 +20,7 @@ available at https://github.com/yongqyu/TCN.
 
 ## Paper
 [Typeface Completion with Generative Adversarial Networks](http://arxiv.org/abs/1811.03762) <br />
-[Yonggyu Park](https://github.com/yongqyu), [Junhyun LEE](https://github.com/LeeJunHyun), [Yookyung Koh](https://github.com/yookyungKoh), [Inyeop Lee](https://github.com/inyeoplee77), [Jaewoo Kang](http://infos.korea.ac.kr/kang/)
+[Yonggyu Park](https://github.com/yongqyu), [Junhyun LEE](https://github.com/LeeJunHyun), [Yookyung Koh](https://github.com/yookyungKoh), [Inyeop Lee](https://github.com/inyeoplee77), [Jinhyuk Lee](https://github.com/jhyuklee) [Jaewoo Kang](http://infos.korea.ac.kr/kang/)
 
 
 ## Results
