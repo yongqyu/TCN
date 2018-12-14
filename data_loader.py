@@ -1,120 +1,151 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
+from torch.utils import data
+from torchvision import transforms as T
+from torchvision.datasets import ImageFolder
+from PIL import Image
+import torch
 import os
 import random
-import numpy as np
-import torch
-from torch.utils import data
-from torchvision import transforms
-from PIL import Image, ImageOps, ImageFont, ImageDraw
+import tqdm
 
 
-class ImageFolder(data.Dataset):
-	"""Load Variaty Chinese Fonts for Iterator. """
-	def __init__(self, root, transform=None, image_size=128):
-		"""Initializes image paths and preprocessing module."""
-		self.root = root
-		self.image_paths = list(map(lambda x: os.path.join(root, x), os.listdir(root)))
-		random.shuffle(self.image_paths)
-		self.transform = transform
-		self.image_size = image_size
-		print("image count in path :", len(self.image_paths))
+class EncoderFolder(data.Dataset):
+    """Dataset class for the CelebA dataset."""
 
-	def __getitem__(self, index):
-		"""Reads an image from a file and preprocesses it and returns."""
-		image_path = self.image_paths[index]
-		style_idx = int(image_path.split('_')[0][len(self.root):])
-		char_idx = int(image_path.split('_')[1][:-len(".png")])
-
-		try:
-			target_path = random.choice([x for x in self.image_paths
-										if str(style_idx)+'_' in x and '_'+str(char_idx) not in x])
-		except:
-			target_path = image_path
-		style_trg_idx = int(target_path.split('_')[0][len(self.root):])
-		char_trg_idx = int(target_path.split('_')[1][:-len(".png")])
-
-		# Image split
-		image = Image.open(image_path)
-		inverted_image = ImageOps.invert(image)
-		target = Image.open(target_path)
-		inverted_target = ImageOps.invert(target)
-
-		src_img = np.reshape(image.crop((0,0,self.image_size,self.image_size)),(128,128,1))
-		trg_img = np.reshape(target.crop((0,0,self.image_size,self.image_size)),(128,128,1))
-		inverted_src_img = np.reshape(inverted_image.crop((0,0,self.image_size,self.image_size)),(128,128,1))
-		inverted_trg_img = np.reshape(inverted_target.crop((0,0,self.image_size,self.image_size)),(128,128,1))
-		src_img = np.concatenate((src_img,inverted_src_img),axis=2)
-		trg_img = np.concatenate((trg_img,inverted_trg_img),axis=2)
-
-		if self.transform is not None:
-			src_img = self.transform(src_img)
-			trg_img = self.transform(trg_img)
-		return src_img, trg_img, style_idx, char_idx, char_trg_idx, style_trg_idx
-
-	def __len__(self):
-		"""Returns the total number of font files."""
-		return len(self.image_paths)
-
-class EncImageFolder(data.Dataset):
-    """Load Variaty Styles for Iterator. """
-    def __init__(self, root, transform=None, image_size=128):
-        """Initializes image paths and preprocessing module."""
-        self.root = root
-        self.image_paths = list(map(lambda x: os.path.join(root, x), os.listdir(root)))
+    def __init__(self, image_dir, transform, mode):
+        """Initialize and preprocess the CelebA dataset."""
+        self.image_dir = image_dir
+        self.images = list(map(lambda x: os.path.join(image_dir+'train', x), os.listdir(image_dir+'train')))
         self.transform = transform
-        self.image_size = image_size
-        print("image count in path :", len(self.image_paths))
+        self.mode = mode
+
+        train_path = 'pretrain_ch.pkl'
+        if os.path.isfile(train_path):
+            self.train_dataset = torch.load(train_path)
+        else:
+            self.train_dataset = []
+            self.preprocess()
+            torch.save(self.train_dataset, train_path)
+
+        self.num_images = len(self.train_dataset)
+
+    def preprocess(self):
+        """Preprocess the CelebA attribute file."""
+
+        random.seed(1234)
+        random.shuffle(self.images)
+        for i, img in enumerate(tqdm.tqdm(self.images)):
+            style_idx = int(img.split('_')[0][len(self.image_dir+'train/'):])
+            char_idx = int(img.split('_')[1][:-len(".png")])
+
+            style_trg_idx = []
+            char_trg_idx = []
+            style_target = random.choice([x for x in self.images
+                                     if str(style_idx)+'_' not in x and '_'+str(char_idx) in x])
+            style_trg_idx.append(int(style_target.split('_')[0][len(self.image_dir):]))
+            char_target = random.choice([x for x in self.images
+                                     if str(style_idx)+'_' in x and '_'+str(char_idx) not in x])
+            char_trg_idx.append(int(char_target.split('_')[1][:-len(".png")]))
+
+            self.train_dataset.append([img, style_target, char_target, style_idx, char_idx, style_trg_idx, char_trg_idx])
 
     def __getitem__(self, index):
-        """Reads an image from a file and preprocesses it and returns."""
-        image_path = self.image_paths[index]
-        style_idx = int(image_path.split('_')[0][len(self.root):])
-        char_idx = int(image_path.split('_')[1])
-        char_tg_idx = int(image_path.split('_')[2])
-        style_tg_idx = int(image_path.split('_')[3][:-len(".png")])
+        """Return one image and its corresponding attribute label."""
+        dataset = self.train_dataset if self.mode == 'train' else self.test_dataset
+        src, style_trg, char_trg, src_style, src_char, trg_style, trg_char = dataset[index]
+        src = self.transform(Image.open(src))
+        style_trg = self.transform(Image.open(style_trg))
+        char_trg = self.transform(Image.open(char_trg))
 
-        # Image split
-        image = Image.open(image_path)
-        inverted_image = ImageOps.invert(image)
-
-        src_img = np.reshape(image.crop((0,0,self.image_size,self.image_size)),(128,128,1))
-        char_img = np.reshape(image.crop((self.image_size,0,2*self.image_size,self.image_size)),(128,128,1))
-        style_img = np.reshape(image.crop((2*self.image_size,0,3*self.image_size,self.image_size)),(128,128,1))
-
-        inverted_src_img = np.reshape(inverted_image.crop((0,0,self.image_size,self.image_size)),(128,128,1))
-        inverted_char_img = np.reshape(inverted_image.crop((self.image_size,0,2*self.image_size,self.image_size)),(128,128,1))
-        inverted_style_img = np.reshape(inverted_image.crop((2*self.image_size,0,3*self.image_size,self.image_size)),(128,128,1))
-
-        src_img = np.concatenate((src_img,inverted_src_img),axis=2)
-        char_img = np.concatenate((char_img,inverted_char_img),axis=2)
-        style_img = np.concatenate((style_img,inverted_style_img),axis=2)
-
-        if self.transform is not None:
-            src_img = self.transform(src_img)
-            char_img = self.transform(char_img)
-            style_img = self.transform(style_img)
-        return src_img, char_img, style_img, style_idx, char_idx, char_tg_idx, style_tg_idx
+        return src, style_trg, char_trg, src_style, src_char,\
+               torch.LongTensor(trg_style), torch.LongTensor(trg_char)
 
     def __len__(self):
-        """Returns the total number of font files."""
-        return len(self.image_paths)
+        """Return the number of images."""
+        return self.num_images
 
-def get_loader(image_path, image_size, batch_size, num_workers=2):
-	"""Builds and returns Dataloader."""
+class ImageFolder(data.Dataset):
+    """Dataset class for the CelebA dataset."""
 
-	transform = transforms.Compose([
-					transforms.ToTensor(),
-					transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+    def __init__(self, image_dir, transform, mode):
+        """Initialize and preprocess the CelebA dataset."""
+        self.image_dir = image_dir
+        self.train_images = list(map(lambda x: os.path.join(image_dir+'train', x), os.listdir(image_dir+'train')))
+        self.test_images = list(map(lambda x: os.path.join(image_dir+'test', x), os.listdir(image_dir+'test')))
+        self.transform = transform
+        self.mode = mode
 
-	if 'png' in image_path:
-		dataset = ImageFolder(image_path, transform, image_size)
-	else:
-		dataset = EncImageFolder(image_path, transform, image_size)
+        test_path = 'test_eng.pkl'
+        if os.path.isfile(test_path):
+            self.test_dataset = torch.load(test_path)
+        else:
+            self.test_dataset = []
+            self.preprocess()
+            torch.save(self.test_dataset, test_path)
 
-	data_loader = data.DataLoader(dataset=dataset,
-								  batch_size=batch_size,
-								  shuffle=True,
-								  num_workers=num_workers)
-	return data_loader
+        if mode == 'train':
+            self.num_images = len(self.train_images)
+        else:
+            self.num_images = len(self.test_dataset)
+
+    def preprocess(self):
+        """Preprocess the CelebA attribute file."""
+
+        random.seed(1234)
+        random.shuffle(self.test_images)
+        for i, img in enumerate(self.test_images):
+            style_idx = int(img.split('_')[0][len(self.image_dir+'test/'):])
+            char_idx = int(img.split('_')[1][:-len(".png")])
+
+            target = random.choice([x for x in self.test_images
+                                     if str(style_idx)+'_' in x and '_'+str(char_idx) not in x])
+            char_trg_idx = int(target.split('_')[1][:-len(".png")])
+
+            self.test_dataset.append([img, style_idx, char_idx, target, char_trg_idx])
+
+    def __getitem__(self, index):
+        """Return one image and its corresponding attribute label."""
+        if self.mode == 'train':
+            random.seed()
+            random.shuffle(self.train_images)
+
+            src = self.train_images[index]
+            src_style = int(src.split('_')[0][len(self.image_dir+'train/'):])
+            src_char = int(src.split('_')[1][:-len(".png")])
+
+            try:
+                trg = random.choice([x for x in self.train_images
+                                        if str(src_style)+'_' in x and '_'+str(src_char) not in x])
+            except:
+                trg = src
+            trg_char = int(trg.split('_')[1][:-len(".png")])
+        else:
+            src, src_style, src_char, trg, trg_char = self.test_dataset[index]
+
+        src = self.transform(Image.open(src))
+        trg = self.transform(Image.open(trg))
+
+        return src, src_style, src_char, \
+               trg, trg_char
+
+    def __len__(self):
+        """Return the number of images."""
+        return self.num_images
+
+
+def get_loader(image_dir, image_size=128,
+               batch_size=16, mode='train', num_workers=1):
+    """Build and return a data loader."""
+    transform = []
+    transform.append(T.Resize(image_size))
+    transform.append(T.ToTensor())
+    #transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+    transform = T.Compose(transform)
+
+    dataset = ImageFolder(image_dir, transform, mode)
+    #dataset = EncoderFolder(image_dir, transform, mode)
+
+    data_loader = data.DataLoader(dataset=dataset,
+                                  batch_size=batch_size,
+                                  shuffle=(mode=='train'),
+                                  num_workers=num_workers)
+    return data_loader

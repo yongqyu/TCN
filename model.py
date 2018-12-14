@@ -1,229 +1,165 @@
-from collections import namedtuple
-import numpy as np
-import functools
 import torch
 import torch.nn as nn
-from torch.nn import init
 import torch.nn.functional as F
-import torchvision
-from torchvision import models
-#==================================Function====================================/
-#==============================================================================/
+import numpy as np
 
-def weights_init_normal(m):
-	classname = m.__class__.__name__
-	# print(classname)
-	if classname.find('Conv') != -1:
-		init.normal_(m.weight.data, 0.0, 0.02)
-	elif classname.find('Linear') != -1:
-		init.normal_(m.weight.data, 0.0, 0.02)
-	elif classname.find('BatchNorm2d') != -1:
-		init.normal_(m.weight.data, 1.0, 0.02)
-		init.constant_(m.bias.data, 0.0)
 
-def init_weights(net, init_type='normal'):
-	#print('initialization method [%s]' % init_type)
-	if init_type == 'normal':
-		net.apply(weights_init_normal)
-	elif init_type == 'xavier':
-		net.apply(weights_init_xavier)
-	elif init_type == 'kaiming':
-		net.apply(weights_init_kaiming)
-	elif init_type == 'orthogonal':
-		net.apply(weights_init_orthogonal)
-	else:
-		raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
+class ResidualBlock(nn.Module):
+    """Residual Block with instance normalization."""
+    def __init__(self, dim_in, dim_out):
+        super(ResidualBlock, self).__init__()
+        self.main = nn.Sequential(
+            nn.Conv2d(dim_in, dim_out, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.InstanceNorm2d(dim_out, affine=True, track_running_stats=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(dim_out, dim_out, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.InstanceNorm2d(dim_out, affine=True, track_running_stats=True))
 
-def get_norm_layer(norm_type='instance'):
-	if norm_type == 'batch':
-		norm_layer = functools.partial(nn.BatchNorm2d, affine=True)
-	elif norm_type == 'instance':
-		norm_layer = functools.partial(nn.InstanceNorm2d, affine=False)
-	elif norm_type == 'none':
-		norm_layer = None
-	else:
-		raise NotImplementedError('normalization layer [%s] is not found' % norm_type)
-	return norm_layer
+    def forward(self, x):
+        return x + self.main(x)
 
-#==================================ResnetB=====================================/
-#==============================================================================/
 
-# Define a resnet block
-class ResnetBlock(nn.Module):
-	def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias):
-		super(ResnetBlock, self).__init__()
-		self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias)
+class Encoder(nn.Module):
+    """Enocder network."""
+    def __init__(self, image_size=128, conv_dim=64, c_dim=5):
+        super(Encoder, self).__init__()
 
-	def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias):
-		conv_block = []
-		p = 0
-		if padding_type == 'reflect':
-			conv_block += [nn.ReflectionPad2d(1)]
-		elif padding_type == 'replicate':
-			conv_block += [nn.ReplicationPad2d(1)]
-		elif padding_type == 'zero':
-			p = 1
-		else:
-			raise NotImplementedError('padding [%s] is not implemented' % padding_type)
+        layers = []
+        layers.append(nn.Conv2d(1, conv_dim, kernel_size=7, stride=1, padding=3, bias=False))
+        layers.append(nn.InstanceNorm2d(conv_dim, affine=True, track_running_stats=True))
+        layers.append(nn.LeakyReLU(inplace=True))
 
-		conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-					   norm_layer(dim),
-					   nn.ReLU(True)]
-		if use_dropout:
-			conv_block += [nn.Dropout(0.5)]
+        # Down-sampling layers.
+        curr_dim = conv_dim
+        for i in range(2):
+            layers.append(nn.Conv2d(curr_dim, curr_dim*2, kernel_size=4, stride=2, padding=1, bias=False))
+            layers.append(nn.InstanceNorm2d(curr_dim*2, affine=True, track_running_stats=True))
+            layers.append(nn.LeakyReLU(inplace=True))
+            curr_dim = curr_dim * 2
 
-		p = 0
-		if padding_type == 'reflect':
-			conv_block += [nn.ReflectionPad2d(1)]
-		elif padding_type == 'replicate':
-			conv_block += [nn.ReplicationPad2d(1)]
-		elif padding_type == 'zero':
-			p = 1
-		else:
-			raise NotImplementedError('padding [%s] is not implemented' % padding_type)
-		conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-					   norm_layer(dim)]
+        kernel_size = int(image_size / np.power(2, 2))
+        self.main = nn.Sequential(*layers)
 
-		return nn.Sequential(*conv_block)
+    def forward(self, x):
+        # Replicate spatially and concatenate domain information.
+        out_src = self.main(x)
+        return out_src, None
 
-	def forward(self, x):
-		out = x + self.conv_block(x)
-		return out
+class Classifier(nn.Module):
+    """Enocder network."""
+    def __init__(self, image_size=128, conv_dim=64, c_dim=5):
+        super(Classifier, self).__init__()
 
-#==================================Encoder=====================================/
-#==============================================================================/
+        layers = []
+        layers.append(nn.Conv2d(1, conv_dim, kernel_size=7, stride=1, padding=3, bias=False))
+        layers.append(nn.InstanceNorm2d(conv_dim, affine=True, track_running_stats=True))
+        layers.append(nn.LeakyReLU(inplace=True))
 
-# Defines the generator that consists of Resnet blocks between a few
-# downsampling/upsampling operations.
-# Code and idea originally from Justin Johnson's architecture.
-# https://github.com/jcjohnson/fast-neural-style/
-class Resnet_Encoder(nn.Module):
-	def __init__(self, num_classes, input_nc=2, ngf=32, norm_layer=get_norm_layer(norm_type='batch'),
-					   embedding_size=256, use_dropout=False, n_blocks=6, padding_type='reflect'):
-		assert(n_blocks >= 0)
-		super(Resnet_Encoder, self).__init__()
-		if type(norm_layer) == functools.partial:
-			use_bias = norm_layer.func == nn.InstanceNorm2d
-		else:
-			use_bias = norm_layer == nn.InstanceNorm2d
+        # Down-sampling layers.
+        curr_dim = conv_dim
+        for i in range(2):
+            layers.append(nn.Conv2d(curr_dim, curr_dim*2, kernel_size=4, stride=2, padding=1, bias=False))
+            layers.append(nn.InstanceNorm2d(curr_dim*2, affine=True, track_running_stats=True))
+            layers.append(nn.LeakyReLU(inplace=True))
+            curr_dim = curr_dim * 2
 
-		model = [nn.ReflectionPad2d(3),
-				 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0,
-						   bias=use_bias),
-				 norm_layer(ngf),
-				 nn.LeakyReLU(0.01, inplace=True)]
+        kernel_size = int(image_size / np.power(2, 2))
+        self.main = nn.Sequential(*layers)
+        self.conv = nn.Conv2d(curr_dim, c_dim, kernel_size=kernel_size, bias=False)
 
-		n_downsampling = 3
-		for i in range(n_downsampling):
-			mult = 2**i
-			model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=7,
-								stride=3, padding=2, bias=use_bias),
-					  norm_layer(ngf * mult * 2),
-					  nn.LeakyReLU(0.01, inplace=True)]
+    def forward(self, x):
+        # Replicate spatially and concatenate domain information.
+        out_src = self.main(x)
+        out_cls = self.conv(out_src)
+        return out_src, out_cls.view(out_cls.size(0), out_cls.size(1))
 
-		mult = 2**n_downsampling
-		for i in range(n_blocks):
-			model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
-		self.model = nn.Sequential(*model)
-		self.classifier = nn.Sequential(
-			nn.ReLU(True),
-			nn.Dropout(),
-			nn.Linear(ngf * mult * 16, num_classes)
-		)
-		init_weights(self.model)
-		init_weights(self.classifier)
+class EncoderList(nn.Module):
+    def __init__(self, image_size=128, conv_dim=64, s_dim=5, c_dim=5):
+        super(EncoderList, self).__init__()
 
-	def forward(self, input):
-		vec = self.model(input)
-		vec = vec.view(vec.size(0), -1)
-		cls = self.classifier(vec)
-		return vec, cls
+        self.style_encoder = Encoder(image_size, conv_dim, s_dim)
+        self.char_encoder  = Encoder(image_size, conv_dim, c_dim)
 
-#===============================Discriminator==================================/
-#==============================================================================/
+    def forward(self, x):
+        style_src, style_cls = self.style_encoder(x)
+        char_src,  char_cls  = self.char_encoder(x)
 
-class Resnet_Discriminator(nn.Module):
-	def __init__(self, tf_classes=1, st_classes=150, ch_classes=1000, input_nc=2, ngf=32,
-						norm_layer=get_norm_layer(norm_type='batch'),
-						use_dropout=False, n_blocks=6, padding_type='reflect'):
-		assert(n_blocks >= 0)
-		super(Resnet_Discriminator, self).__init__()
-		if type(norm_layer) == functools.partial:
-			use_bias = norm_layer.func == nn.InstanceNorm2d
-		else:
-			use_bias = norm_layer == nn.InstanceNorm2d
+        return style_src, char_src, style_cls, char_cls
 
-		model = [nn.ReflectionPad2d(3),
-				 nn.Conv2d(input_nc, ngf, kernel_size=5, padding=0,
-						   bias=use_bias),
-				 norm_layer(ngf),
-				 nn.LeakyReLU(0.01, inplace=True)]
+class ClassifierList(nn.Module):
+    def __init__(self, image_size=128, conv_dim=64, s_dim=5, c_dim=5):
+        super(ClassifierList, self).__init__()
 
-		n_downsampling = 3
-		for i in range(n_downsampling):
-			mult = 2**i
-			model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=7,
-								stride=3, padding=2, bias=use_bias),
-					  norm_layer(ngf * mult * 2),
-					  nn.LeakyReLU(0.01, inplace=True)]
+        self.style_encoder = Classifier(image_size, conv_dim, s_dim)
+        self.char_encoder  = Classifier(image_size, conv_dim, c_dim)
 
-		mult = 2**n_downsampling
-		for i in range(n_blocks):
-			model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+    def forward(self, x):
+        style_src, style_cls = self.style_encoder(x)
+        char_src,  char_cls  = self.char_encoder(x)
 
-		self.model = nn.Sequential(*model)
-		self.tf_classifier = nn.Conv2d(ngf * mult, tf_classes, kernel_size=4, stride=1, padding=0, bias=False)
-		self.st_classifier = nn.Conv2d(ngf * mult, st_classes, kernel_size=4, stride=1, padding=0, bias=False)
-		self.ch_classifier = nn.Conv2d(ngf * mult, ch_classes, kernel_size=4, stride=1, padding=0, bias=False)
-		init_weights(self.model)
-		init_weights(self.tf_classifier)
-		init_weights(self.st_classifier)
-		init_weights(self.ch_classifier)
-
-	def forward(self, input):
-		vec = self.model(input)
-		vec = F.tanh(vec)
-		tf_cls = self.tf_classifier(vec)
-		st_cls = self.st_classifier(vec)
-		ch_cls = self.ch_classifier(vec)
-		return tf_cls.squeeze(), st_cls.squeeze(), ch_cls.squeeze()
-
-#=================================Generator====================================/
-#==============================================================================/
-
-def deconv(c_in, c_out, k_size, stride=2, pad=1, bn=True):
-	"""Custom deconvolutional layer for simplicity."""
-	layers = []
-	layers.append(nn.ConvTranspose2d(c_in, c_out, k_size, stride, pad))
-	if bn:
-		layers.append(nn.BatchNorm2d(c_out))
-	return nn.Sequential(*layers)
-
+        return style_src, char_src, style_cls, char_cls
 
 class Generator(nn.Module):
-	"""Generator containing 7 deconvolutional layers."""
-	def __init__(self, c_in=512, c_out=2, image_size=64, conv_dim=64):
-		super(Generator, self).__init__()
-		self.mixer = nn.Conv2d(c_in, c_in, 1)
-		self.fc = deconv(c_in, conv_dim*8, 5, 1, 0, bn=False)
-		self.deconv1 = deconv(conv_dim*8, conv_dim*4, 4)
-		self.deconv2 = deconv(conv_dim*4, conv_dim*2, 4)
-		self.deconv3 = deconv(conv_dim*2, conv_dim, 4)
-		self.deconv4 = deconv(conv_dim, c_out, 4, bn=False)
+    """Generator network."""
+    def __init__(self, conv_dim=64, c_dim=5, repeat_num=6):
+        super(Generator, self).__init__()
 
-	def forward(self, c_org, style, char, c_trg):
-		style = style.view(style.size(0), -1, 4, 4)
-		char = char.view(char.size(0), -1, 4, 4)
-		c_org = c_org.view(c_org.size(0), c_org.size(1), 1, 1)
-		c_org = c_org.repeat(1, 1, char.size(2), char.size(3))
-		c_trg = c_trg.view(c_trg.size(0), c_trg.size(1), 1, 1)
-		c_trg = c_trg.repeat(1, 1, char.size(2), char.size(3))
-		z = torch.cat([c_org, style, char, c_trg], dim=1)
-		z = self.mixer(z)
-		out = self.fc(z)
-		out = F.leaky_relu(self.deconv1(out), 0.05)
-		out = F.leaky_relu(self.deconv2(out), 0.05)
-		out = F.leaky_relu(self.deconv3(out), 0.05)
-		out = F.tanh(self.deconv4(out))
-		return out
+        curr_dim = conv_dim * np.power(2, 2)
+        self.mixer = nn.Conv2d(2*curr_dim+2*c_dim, curr_dim, 1)
+        layers = []
+
+        # Bottleneck layers.
+        for i in range(repeat_num):
+            layers.append(ResidualBlock(dim_in=curr_dim, dim_out=curr_dim))
+
+        # Up-sampling layers.
+        for i in range(2):
+            layers.append(nn.ConvTranspose2d(curr_dim, curr_dim//2, kernel_size=4, stride=2, padding=1, bias=False))
+            layers.append(nn.InstanceNorm2d(curr_dim//2, affine=True, track_running_stats=True))
+            layers.append(nn.LeakyReLU(inplace=True))
+            curr_dim = curr_dim // 2
+
+        layers.append(nn.Conv2d(curr_dim, 1, kernel_size=7, stride=1, padding=3, bias=False))
+        layers.append(nn.Tanh())
+        self.main = nn.Sequential(*layers)
+
+    def forward(self, c_from, style, char, c_to):
+        # Replicate spatially and concatenate domain information.
+        c_from = c_from.view(c_from.size(0), c_from.size(1), 1, 1)
+        c_from = c_from.repeat(1, 1, style.size(2), style.size(3))
+        c_to = c_to.view(c_to.size(0), c_to.size(1), 1, 1)
+        c_to = c_to.repeat(1, 1, style.size(2), style.size(3))
+
+        z = self.mixer(torch.cat([c_from, style, char, c_to], 1))
+        return self.main(z)
+
+
+class Discriminator(nn.Module):
+    """Discriminator network with PatchGAN."""
+    def __init__(self, image_size=128, conv_dim=64, s_dim=5, c_dim=5, repeat_num=6):
+        super(Discriminator, self).__init__()
+        layers = []
+        layers.append(nn.Conv2d(1, conv_dim, kernel_size=4, stride=2, padding=1))
+        layers.append(nn.LeakyReLU(0.01))
+
+        curr_dim = conv_dim
+        for i in range(1, repeat_num):
+            layers.append(nn.Conv2d(curr_dim, curr_dim*2, kernel_size=4, stride=2, padding=1))
+            layers.append(nn.LeakyReLU(0.01))
+            curr_dim = curr_dim * 2
+
+        kernel_size = int(image_size / np.power(2, repeat_num))
+        self.main = nn.Sequential(*layers)
+        self.conv1 = nn.Conv2d(curr_dim, 1, kernel_size=kernel_size, bias=False)
+        self.conv2 = nn.Conv2d(curr_dim, s_dim, kernel_size=kernel_size, bias=False)
+        self.conv3 = nn.Conv2d(curr_dim, c_dim, kernel_size=kernel_size, bias=False)
+
+    def forward(self, x):
+        h = self.main(x)
+        out_src = self.conv1(h)
+        out_style = self.conv2(h)
+        out_char  = self.conv3(h)
+        return out_src.view(out_src.size(0), out_src.size(1)), \
+               out_style.view(out_style.size(0), out_style.size(1)),\
+               out_char.view(out_char.size(0), out_char.size(1))
